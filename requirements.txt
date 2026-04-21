@@ -1,0 +1,6 @@
+torch
+poke-env
+websockets
+pytest
+matplotlib
+ray
