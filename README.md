@@ -1,4 +1,5 @@
 # pokeenv_transformer
+![Battle highlight](assets/replay_sample.gif)
 
 Train, evaluate, and run a Transformer-powered Pokemon Showdown bot for Gen 9 Random Battles.
 
