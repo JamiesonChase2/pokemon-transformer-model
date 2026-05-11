@@ -1,95 +1,72 @@
 # pokeenv_transformer
 
-`pokeenv_transformer` is a Gen 9 Random Battles research/training project built on top of `poke-env`. It packages the full loop for a Pokemon Showdown bot: structured observation extraction, Transformer policy/value modeling, replay storage, behavior cloning, league-style self-play, evaluation against baselines, and log/benchmark tooling.
+Train, evaluate, and run a Transformer-powered Pokemon Showdown bot for Gen 9 Random Battles.
 
-## What You Built
+`pokeenv_transformer` turns `poke-env` battle state into structured tensors, feeds them through a policy/value Transformer, and closes the loop with behavior cloning, self-play, checkpointing, evaluation, and analysis tooling. It is built for local research on partially observed battle decision-making, not just one-off inference.
 
-You built a local training stack for a partially observed battle bot rather than just a single model file. The main pieces are:
+## Features
 
-- A deterministic tokenizer that converts battle state into fixed-layout tensors with hidden-information masking.
-- A Transformer policy/value network that predicts both a 14-action policy and a value target.
-- A disk-backed replay pipeline so long self-play or imitation runs do not need to stay entirely in RAM.
-- Two training paths:
-  - behavior cloning from `SimpleHeuristicsPlayer`
-  - league-style self-play where `current` plays `best`, trains on collected rollouts, then gets promoted if it clears an eval threshold
-- Utility scripts for evaluation, plotting, dashboards, interactive play, and backend benchmarking.
+- Transformer policy/value model with a fixed 14-action policy space.
+- `poke-env` player integration for ladder, challenge, self-play, and baseline matches.
+- Deterministic Gen 9 Random Battles tokenizer with hidden-information masking.
+- Disk-backed replay shards for long-running self-play and imitation experiments.
+- Behavior cloning from `SimpleHeuristicsPlayer`.
+- PPO-style league self-play with current-vs-best promotion.
+- Evaluation against Random, MaxDamage, and SimpleHeuristics baselines.
+- Utility scripts for plotting logs, dashboards, rollout benchmarking, and token debugging.
+- Unit tests for tokenizer shapes, model forward passes, action masks, reward shaping, and training helpers.
 
-## Observation Schema And Model
+## Project Structure
 
-For the default `gen9randombattle` vocabulary, each battle state is serialized into a flat `5534`-dimensional observation vector. That vector is split into:
+```text
+src/
+  bot.py          # poke-env player adapters and trajectory collection
+  checkpoint.py   # checkpoint save/load and model reconstruction
+  model.py        # Transformer encoder and policy/value heads
+  policy.py       # action masking and action-index conversion
+  replay.py       # disk-backed replay buffer
+  tokenizer.py    # battle-state observation extraction
+  train.py        # PPO and imitation training utilities
+  vocab.py        # observation vocabulary construction/loading
 
-- `pokemon_body`: `12 x 286 = 3432` dims
-- `pokemon_ids`: `12 x 2 = 24` dims
-- `ability_ids`: `12 x 4 = 48` dims
-- `move_ids`: `12 x 4 = 48` dims
-- `move_scalars`: `12 x (4 x 40) = 1920` dims
-- `global_scalars`: `36` dims
-- `transition_move_ids`: `2` dims
-- `transition_scalars`: `10` dims
-- `action_mask`: `14` dims
+scripts/
+  train_selfplay.py          # league-style self-play training
+  train_imitation.py         # behavior-cloning trainer
+  eval_baseline_suite.py     # baseline evaluation suite
+  play.py                    # play ladder/challenge games with a checkpoint
+  plot_training_log.py       # self-play log plotting
+  plot_imitation_log.py      # imitation log plotting
 
-The schema represents both teams as `12` Pokemon slots total, with up to `4` moves and `4` ability candidates per slot. It also includes global battle state, the last transition summary, and a legal-action mask over the fixed `14`-action policy space:
+tests/
+  test_*.py                  # focused unit coverage
+```
 
-- `4` move actions
-- `4` tera-move actions
-- `6` switch actions
+## Installation
 
-The Transformer does not attend over the flat vector directly. It first repacks the observation into a `15`-token internal sequence:
+### 1. Clone the repository
 
-- `1` actor token
-- `1` critic token
-- `1` field/global token
-- `12` Pokemon tokens
+```bash
+git clone <your-repo-url>
+cd pokeenv_transformer
+```
 
-Each Pokemon token is built from learned embeddings plus scalar banks:
-
-- species embedding
-- item embedding
-- embedded HP, level, stats, and weight buckets
-- pooled ability representation
-- pooled per-move representation
-- raw boost, flag, type, effect, and status features
-
-Default training runs use this model layout:
-
-- `d_model=1024`
-- `nhead=8`
-- `num_layers=2`
-- `ff_dim=4096`
-- `dropout=0.0`
-- policy head over `14` actions
-- value head with `51` bins over `[-1.6, 1.6]`
-
-At those defaults, the model has about `55.5M` trainable parameters for the curated Gen 9 Random Battles schema.
-
-## Repo Layout
-
-- `src/tokenizer.py`: Builds structured observations, preserves revealed information, and folds in Gen 9 random battles schema details.
-- `src/model.py`: Defines the Transformer encoder plus policy/value heads.
-- `src/policy.py`: Handles action masking and policy selection over the 14-action space.
-- `src/replay.py`: Stores replay samples as disk-backed `.pt` shards.
-- `src/train.py`: Implements PPO-style and imitation-learning update logic.
-- `src/bot.py`: Adapts the model to `poke-env` players.
-- `src/checkpoint.py`: Saves and restores checkpoints, vocab, and model config.
-- `scripts/train_selfplay.py`: Main league-training entry point.
-- `scripts/train_imitation.py`: Behavior-cloning trainer against `SimpleHeuristicsPlayer`.
-- `scripts/eval_baseline_suite.py`: Evaluates checkpoints versus Random, MaxDamage, and SimpleHeuristics baselines.
-- `scripts/plot_training_log.py`, `scripts/plot_imitation_log.py`, `scripts/dashboard_imitation_runs.py`: Parse logs into charts and dashboards.
-- `scripts/benchmark_selfplay_backends.py`: Compares rollout throughput across self-play execution backends.
-- `tests/`: Unit coverage for tokenizer shape rules, model forward passes, reward shaping, replay helpers, baseline parsing, and rollout utilities.
-
-## Setup
+### 2. Create a Python environment
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+```
+
+### 3. Install dependencies
+
+```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## Run A Local Showdown Server
+### 4. Run a local Pokemon Showdown server
 
-From a local `pokemon-showdown` checkout:
+Most training and evaluation workflows expect a local Showdown server. From a `pokemon-showdown` checkout:
 
 ```bash
 node pokemon-showdown start --no-security --port 8000
@@ -103,34 +80,45 @@ export SHOWDOWN_AUTH_URL=http://localhost:8000/action.php?
 export SHOWDOWN_ROOT=/path/to/pokemon-showdown
 ```
 
-`SHOWDOWN_ROOT` lets the vocab/tokenizer pull Showdown data such as Gen 9 item metadata.
+`SHOWDOWN_ROOT` is optional, but useful when the tokenizer/vocabulary should read local Showdown metadata.
 
-## Common Workflows
+## 🛠️ Usage
 
-Smoke-test a self-play run:
+### Run the test suite
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
+```
+
+The `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` prefix avoids unrelated global pytest plugin issues.
+
+### Smoke-test self-play training
 
 ```bash
 python -m scripts.train_selfplay \
   --iterations 1 \
   --selfplay-battles 2 \
+  --selfplay-steps 0 \
   --train-steps 2 \
   --eval-battles 2 \
   --batch-size 8 \
   --checkpoint-dir checkpoints_smoke
 ```
 
-Warm-start with behavior cloning:
+### Train with behavior cloning
 
 ```bash
 python -m scripts.train_imitation \
   --iterations 1 \
   --demo-battles 4 \
+  --demo-steps 0 \
   --train-steps 2 \
   --eval-battles 4 \
+  --batch-size 8 \
   --checkpoint-dir checkpoints_imitation_smoke
 ```
 
-Evaluate a checkpoint against baseline bots:
+### Evaluate a checkpoint
 
 ```bash
 python -m scripts.eval_baseline_suite \
@@ -138,7 +126,7 @@ python -m scripts.eval_baseline_suite \
   --n-battles 20
 ```
 
-Play with a trained checkpoint:
+### Play with a trained checkpoint
 
 ```bash
 python -m scripts.play \
@@ -147,35 +135,30 @@ python -m scripts.play \
   --battle-format gen9randombattle
 ```
 
-Plot training logs:
+### Plot training logs
 
 ```bash
-python -m scripts.plot_training_log path/to/output.txt
-python -m scripts.plot_imitation_log path/to/output.txt
+python -m scripts.plot_training_log path/to/selfplay_output.txt
+python -m scripts.plot_imitation_log path/to/imitation_output.txt
 ```
 
-Run tests:
+## 🔍 Model and Observation Notes
 
-```bash
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
-```
+The default Gen 9 Random Battles observation is a structured flat vector that includes both teams, battle globals, transition history, and a legal-action mask. Internally, the model repacks the observation into a compact token sequence:
 
-The `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` prefix avoids unrelated third-party pytest plugin crashes that can happen in some global Python or Conda installs.
+- 1 actor token
+- 1 critic token
+- 1 field/global token
+- 12 Pokemon tokens
 
-## GitLab Push Notes
+The policy head predicts over 14 actions:
 
-This repository now ignores generated Python caches, replay shards, checkpoints, logs, and rendered plots so a first push stays focused on source code.
+- 4 move actions
+- 4 Terastallized move actions
+- 6 switch actions
 
-If you have already created a GitLab project, add the remote and push:
+The value head supports scalar or two-hot value targets, with the default two-hot configuration using 51 bins across `[-1.6, 1.6]`.
 
-```bash
-git remote add origin git@gitlab.com:<namespace>/pokeenv_transformer.git
-git push -u origin main
-```
+## 📄 License
 
-If you prefer HTTPS:
-
-```bash
-git remote add origin https://gitlab.com/<namespace>/pokeenv_transformer.git
-git push -u origin main
-```
+This project is licensed under the MIT License. Add or update the repository `LICENSE` file with the full license text before publishing.
