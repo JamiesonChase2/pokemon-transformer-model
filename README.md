@@ -82,7 +82,7 @@ export SHOWDOWN_ROOT=/path/to/pokemon-showdown
 
 `SHOWDOWN_ROOT` is optional, but useful when the tokenizer/vocabulary should read local Showdown metadata.
 
-## 🛠️ Usage
+## Usage
 
 ### Run the test suite
 
